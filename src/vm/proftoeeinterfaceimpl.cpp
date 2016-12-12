@@ -589,6 +589,10 @@ COM_METHOD ProfToEEInterfaceImpl::QueryInterface(REFIID id, void ** pInterface)
     {
         *pInterface = static_cast<ICorProfilerInfo8 *>(this);
     }
+    else if (id == IID_ICorProfilerInfo9)
+    {
+        *pInterface = static_cast<ICorProfilerInfo9 *>(this);
+    }
     else if (id == IID_IUnknown)
     {
         *pInterface = static_cast<IUnknown *>(static_cast<ICorProfilerInfo *>(this));
@@ -9638,6 +9642,59 @@ HRESULT ProfToEEInterfaceImpl::ApplyMetaData(
     }
     EX_CATCH_HRESULT(hr);
     return hr;
+}
+
+// Stack walk callback data.
+struct WalkInfo
+{
+    ThreadSamplingCallback* callback;
+    Thread* threadId;
+};
+
+StackWalkAction StackWalkCallback(CrawlFrame* pCf, VOID* data)
+{
+    auto info = static_cast<WalkInfo*>(data);
+    auto frame = pCf->GetFrame();
+
+    if (frame != nullptr)
+    {
+        info->callback((ThreadID)info->threadId, (FunctionID)frame->GetFunction(), (UINT_PTR)frame->GetIP());
+    }
+
+    return SWA_CONTINUE;
+}
+
+HRESULT ProfToEEInterfaceImpl::GetThreadStackSamples(
+    ThreadSamplingCallback *pFunc)
+{
+    // Needs propert contracts
+    // The problem is I think the contract should be GC_TRIGGERS, but also ASYNC
+    // ASYNC seems to imply NOTRIGGER.
+    // Need to discuss with the appropriate folks
+
+    if (pFunc == nullptr)
+    {
+        return E_INVALIDARG;
+    }
+
+    EX_TRY
+    {
+        ThreadSuspend::SuspendEE(ThreadSuspend::SUSPEND_FOR_STACK_SAMPLING);
+        Thread* pThread = nullptr;
+        WalkInfo info{ pFunc, pThread };
+        while ((pThread = ThreadStore::GetThreadList(pThread)) != nullptr)
+        {
+            info.threadId = pThread;
+            pThread->StackWalkFrames(&StackWalkCallback, &info, FUNCTIONSONLY | ALLOW_ASYNC_STACK_WALK);
+        }
+        ThreadSuspend::RestartEE(FALSE, TRUE);
+    }
+    EX_CATCH
+    {
+    }
+    EX_END_CATCH(SwallowAllExceptions);
+
+    return S_OK;
 }
 
 //---------------------------------------------------------------------------------------

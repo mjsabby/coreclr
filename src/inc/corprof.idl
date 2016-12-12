@@ -416,6 +416,15 @@ typedef HRESULT __stdcall StackSnapshotCallback(
                 BYTE context[],
                 void *clientData);
 
+/*
+ * Thread sampling callback
+ *
+ */
+typedef HRESULT __stdcall ThreadSamplingCallback(
+                ThreadID threadId,
+                FunctionID funcId,
+                UINT_PTR ip);
+
 typedef enum
 {
     // These flags represent classes of callback events
@@ -687,6 +696,7 @@ typedef enum
     COR_PRF_SUSPEND_FOR_INPROC_DEBUGGER     = 6,
     COR_PRF_SUSPEND_FOR_GC_PREP             = 7,
     COR_PRF_SUSPEND_FOR_REJIT               = 8,
+    COR_PRF_SUSPEND_FOR_STACK_SAMPLING      = 9,
 } COR_PRF_SUSPEND_REASON;
 
 /*
@@ -3866,6 +3876,22 @@ interface ICorProfilerInfo8 : ICorProfilerInfo7
                                     [in]  ULONG                   cchName,
                                     [out] ULONG                   *pcchName,
                                     [out] WCHAR                    wszName[]);
+};
+
+[
+    object,
+    uuid(3EEE799A-8AD1-483E-86AB-04B58702A3C7),
+    pointer_default(unique),
+    local
+]
+interface ICorProfilerInfo9 : ICorProfilerInfo8
+{
+    /*
+    * Suspends the runtime, walks each thread's stack while calling back
+    * a profiler supplied function for each frame.
+    *
+    */
+    HRESULT GetThreadStackSamples( [in]  ThreadSamplingCallback *pFunc);
 };
 
 /*

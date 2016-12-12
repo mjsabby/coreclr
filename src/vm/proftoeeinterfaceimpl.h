@@ -133,7 +133,7 @@ typedef struct _PROFILER_STACK_WALK_DATA PROFILER_STACK_WALK_DATA;
 // from the profiler implementation.  The profiler will call back on the v-table
 // to get at EE internals as required.
 
-class ProfToEEInterfaceImpl : public ICorProfilerInfo8
+class ProfToEEInterfaceImpl : public ICorProfilerInfo9
 {
 public:
 
@@ -576,6 +576,12 @@ public:
         WCHAR wszName[]);
 
     // end ICorProfilerInfo8
+
+    // begin ICorProfilerInfo9
+
+    COM_METHOD GetThreadStackSamples(ThreadSamplingCallback *pFunc);
+
+    // end ICorProfilerInfo9
 
 protected:
 
