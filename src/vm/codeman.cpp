@@ -6212,6 +6212,94 @@ DWORD NativeUnwindInfoLookupTable::GetMethodDescRVA(NGenLayoutInfo * pNgenLayout
 
 //-----------------------------------------------------------------------------
 
+// BPerf Support
+
+typedef VOID (*MethodIteratorCallBack)(void *context, mdToken memberDef, TADDR hotCodePtr, size_t hotCodeSize, TADDR coldCodePtr, size_t coldCodeSize, unsigned methodSize, ULONG debugOffset);
+typedef VOID (*DebugMapCallback)(void * context, TADDR address, COUNT_T size);
+
+CORCOMPILE_DEBUG_RID_ENTRY GetMethodDebugInfoOffset(PEDecoder *decoder, TADDR debugInfoAddr, COUNT_T debugInfoSize, mdMethodDef methodToken, MethodDesc* pMD)
+{
+    PTR_CORCOMPILE_DEBUG_RID_ENTRY ridTable = dac_cast<PTR_CORCOMPILE_DEBUG_RID_ENTRY>(debugInfoAddr);
+
+    const COUNT_T count = debugInfoSize / sizeof(CORCOMPILE_DEBUG_RID_ENTRY);
+    // The size should be odd for better hashing
+    _ASSERTE((count & 1) != 0);
+
+    const CORCOMPILE_DEBUG_RID_ENTRY ridEntry = ridTable[GetDebugRidEntryHash(methodToken) % count];
+
+    // Do we have multiple code corresponding to the same RID
+    if (!IsMultipleLabelledEntries(ridEntry))
+    {
+        return ridEntry;
+    }
+
+    PTR_CORCOMPILE_DEBUG_LABELLED_ENTRY pLabelledEntry = PTR_CORCOMPILE_DEBUG_LABELLED_ENTRY(decoder->GetRvaData(ridEntry & ~CORCOMPILE_DEBUG_MULTIPLE_ENTRIES));
+
+    const DWORD codeRVA = decoder->GetDataRva(static_cast<const TADDR>(pMD->GetNativeCode()));
+
+    for (;;)
+    {
+        if (pLabelledEntry->nativeCodeRVA == codeRVA)
+        {
+            return pLabelledEntry->debugInfoOffset & ~CORCOMPILE_DEBUG_MULTIPLE_ENTRIES;
+        }
+
+        if (!IsMultipleLabelledEntries(pLabelledEntry->debugInfoOffset))
+        {
+            break;
+        }
+
+        pLabelledEntry++;
+    }
+
+    return 0;
+}
+
+VOID BPerfGetILToNativeMapping(IN PBYTE imageBase, IN COUNT_T offset, IN FP_IDS_NEW fpNew, OUT ULONG32 * pcMap, OUT ICorDebugInfo::OffsetMapping **ppMap)
+{
+    CompressDebugInfo::RestoreBoundariesAndVars(fpNew, nullptr, imageBase + offset, pcMap, ppMap, nullptr, nullptr);
+}
+
+HRESULT BPerfGetInfoForMethods(void* context, void *imageBase, MethodIteratorCallBack callback, DebugMapCallback debugMapCallback)
+{
+    PEDecoder decoder(imageBase);
+
+    COUNT_T debugInfoSize = 0;
+    TADDR debugInfoAddr = 0;
+
+    if (decoder.HasNativeDebugMap())
+    {
+        debugInfoAddr = decoder.GetNativeDebugMap(&debugInfoSize);
+        debugMapCallback(context, debugInfoAddr, debugInfoSize);
+    }
+
+    MethodIterator mi(decoder.GetPersistedModuleImage(), &decoder, MethodIterator::All);
+    while (mi.Next())
+    {
+        const GCInfoToken gcInfoToken = mi.GetGCInfoToken();
+        GcInfoDecoder gcInfoDecoder(gcInfoToken, DECODE_CODE_LENGTH);
+        const unsigned methodSize = gcInfoDecoder.GetCodeLength();
+
+        const TADDR hotCodePtr = mi.GetMethodStartAddress();
+        const TADDR coldCodePtr = mi.GetMethodColdStartAddress();
+
+        size_t hotCodeSize = methodSize;
+        size_t coldCodeSize = 0;
+
+        if (coldCodePtr != NULL)
+        {
+            hotCodeSize = mi.GetHotCodeSize();
+            coldCodeSize = methodSize - hotCodeSize;
+        }
+
+        const auto pMD = mi.GetMethodDesc();
+        const auto mdToken = pMD->GetMemberDef_NoLogging();
+
+        callback(context, mdToken, hotCodePtr, hotCodeSize, coldCodePtr, coldCodeSize, methodSize, GetMethodDebugInfoOffset(&decoder, debugInfoAddr, debugInfoSize, mdToken, pMD));
+    }
+
+    return S_OK;
+}
 
 // Nirvana Support
 
